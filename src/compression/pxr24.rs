@@ -144,11 +144,9 @@ pub fn compress(channels: &ChannelList, bytes_ne: ByteVec, area: IntegerBounds) 
 }
 
 pub fn decompress(channels: &ChannelList, bytes_le: ByteVec, area: IntegerBounds, expected_byte_size: usize, pedantic: bool) -> Result<ByteVec> {
-    let options = zune_inflate::DeflateOptions::default().set_limit(expected_byte_size).set_size_hint(expected_byte_size);
-    let mut decompressor = zune_inflate::DeflateDecoder::new_with_options(&bytes_le, options);
-
-    let encoded_be = decompressor.decode_zlib()
-        .map_err(|_| Error::invalid("zlib-compressed data malformed"))?; // TODO share code with zip?
+    let encoded_be =
+        miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&bytes_le, expected_byte_size)
+            .map_err(|_| Error::invalid("zlib-compressed data malformed"))?; // TODO share code with zip?
 
     let mut encoded_be = encoded_be.as_slice();
     let mut out = Vec::with_capacity(expected_byte_size.min(2048*4));
