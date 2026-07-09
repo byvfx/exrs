@@ -412,13 +412,9 @@ fn split_sections<'d>(data: &'d [u8], header: &DwaHeader) -> Result<[&'d [u8]; 4
 }
 
 fn inflate(compressed: &[u8], expected_size: usize) -> Result<Vec<u8>> {
-    let options = zune_inflate::DeflateOptions::default()
-        .set_limit(expected_size)
-        .set_size_hint(expected_size);
-
-    let inflated = zune_inflate::DeflateDecoder::new_with_options(compressed, options)
-        .decode_zlib()
-        .map_err(|_| Error::invalid("DWA zlib data malformed"))?;
+    let inflated =
+        miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, expected_size)
+            .map_err(|_| Error::invalid("DWA zlib data malformed"))?;
 
     if inflated.len() != expected_size {
         return Err(Error::invalid("DWA zlib data size mismatch"));

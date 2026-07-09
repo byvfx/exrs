@@ -17,12 +17,9 @@ pub fn decompress_bytes(
     expected_byte_size: usize,
     _pedantic: bool,
 ) -> Result<ByteVec> {
-    let options = zune_inflate::DeflateOptions::default()
-        .set_limit(expected_byte_size)
-        .set_size_hint(expected_byte_size);
-    let mut decoder = zune_inflate::DeflateDecoder::new_with_options(&data_le, options);
     let mut decompressed_le =
-        decoder.decode_zlib().map_err(|_| Error::invalid("zlib-compressed data malformed"))?;
+        miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&data_le, expected_byte_size)
+            .map_err(|_| Error::invalid("zlib-compressed data malformed"))?;
 
     differences_to_samples(&mut decompressed_le);
     interleave_byte_blocks(&mut decompressed_le);
