@@ -10,6 +10,7 @@
 use std::{borrow::Cow, convert::TryInto, sync::OnceLock};
 
 use half::f16;
+use half::slice::HalfFloatSliceExt;
 
 use crate::{
     compression::ByteVec,
@@ -683,15 +684,19 @@ fn decode_lossy_dct_group(
                 }
             }
 
-            // nonlinear float -> linear half via LUT, cropped at the image edge
+            // nonlinear float -> linear half via LUT, cropped at the image edge.
+            // Convert the whole 8x8 block f32 -> f16 in one batch: half's slice
+            // conversion uses hardware f16 (AVX+F16C 8-wide on x86, NEON fp16 4-wide
+            // on aarch64) with the feature check hoisted out of the per-pixel loop,
+            // where the scalar `f16::from_f32` pays a call + feature-branch per value.
+            // Bit-identical to the scalar path (same round-to-nearest-even).
             for (component, output) in decoded.iter_mut().enumerate() {
+                let mut nonlinear = [f16::ZERO; 64];
+                nonlinear.convert_from_f32_slice(&dct_blocks[component]);
                 for y in block_y * 8..(block_y * 8 + 8).min(height) {
                     for x in block_x * 8..(block_x * 8 + 8).min(width) {
-                        let value =
-                            dct_blocks[component][(y - block_y * 8) * 8 + (x - block_x * 8)];
-                        let nonlinear = f16::from_f32(value);
-                        output[y * width + x] =
-                            f16::from_bits(to_linear[nonlinear.to_bits() as usize]);
+                        let bits = nonlinear[(y - block_y * 8) * 8 + (x - block_x * 8)].to_bits();
+                        output[y * width + x] = f16::from_bits(to_linear[bits as usize]);
                     }
                 }
             }
@@ -740,8 +745,17 @@ fn from_half_zigzag(zig_zag: &[u16; 64], dst: &mut [f32; 64]) {
         21, 34, 37, 47, 50, 56, 59, 61, 35, 36, 48, 49, 57, 58, 62, 63,
     ];
 
+    // Convert all 64 half values to f32 in one batch (hardware f16: AVX+F16C
+    // 8-wide on x86, NEON fp16 4-wide on aarch64), then un-zigzag by gather. The
+    // per-element `f16::from_bits(..).to_f32()` in the scalar loop pays a call +
+    // feature-branch each; batching hoists the feature check out. `from_bits` is a
+    // free bit reinterpret, so this is bit-identical to the scalar path.
+    let half_block: [f16; 64] = std::array::from_fn(|i| f16::from_bits(zig_zag[i]));
+    let mut natural = [0f32; 64];
+    half_block.convert_to_f32_slice(&mut natural);
+
     for (slot, &src_index) in dst.iter_mut().zip(SRC_INDICES.iter()) {
-        *slot = f16::from_bits(zig_zag[src_index]).to_f32();
+        *slot = natural[src_index];
     }
 }
 
